@@ -177,8 +177,8 @@ uint16 T_EFF;
 
 uint16 senValueV;
 uint16 senValueI;
-uint16 realVol;
-uint16 realCur;
+int32 realVol;
+int32 realCur;
 uint32 powerVal;
 uint32 energyVal;
 uint32 energyVal_Lcd_display;
