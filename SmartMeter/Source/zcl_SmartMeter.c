@@ -93,10 +93,12 @@
 #define RESET      0xC7
 #define RELAY      0xC8
 #define START      0xC9
+#define SET_PARAM  0xCA
 #define FLASH_PARAM  0x0401
 
 //#define SUCCESS  0xB0
 //#define FAILURE  0xB1
+#define ACK_SUCCESS  0xCA
 
 /*
 #define ATTRID_MS_PARAMETER_MEASURED_VALUE  0xA0
@@ -110,9 +112,6 @@
 */
 const uint16 senPinVoltage = SOCADC_AIN6;
 const uint16 senPinCurrent = SOCADC_AIN7;
-
-
-
 
 //! This example uses the following peripherals and I/O signals.
 //!
@@ -128,9 +127,6 @@ const uint16 senPinCurrent = SOCADC_AIN7;
 #define EXAMPLE_PIN_UART_TXD            GPIO_PIN_1
 #define EXAMPLE_GPIO_UART_BASE          GPIO_A_BASE
 
-
-
-
  
 /*********************************************************************
  * TYPEDEFS
@@ -143,16 +139,16 @@ byte zclSmartMeter_TaskID;
 
 uint8 zclSmartMeterSeqNum;
 
-static byte gPermitDuration = 0x00;
+// static byte gPermitDuration = 0x00;
 
 uint16 flagreset;
 uint16 flagrelay;
-uint16 flaginc;
+uint8 flaginc;
 uint8 SerControl;
 uint32 ENERGY_RESET_VALUE;
+uint16 ENERGY_RESET_VALUE_1;
+uint16 ENERGY_RESET_VALUE_0;
 
-uint16 RMS_V;
-uint16 RMS_I;
 uint32 POWER;
 uint16 POWER1;
 uint16 POWER0;
@@ -167,13 +163,13 @@ uint16 MIN_ADC;
 uint16 MAX_ADC;
 uint16 SAMPLE_INT;
 uint16 SAMPLE_WIN;
-uint16 MAG_I;
 uint16 MAG_V;
+uint16 MAG_I;
 uint16 MAX_V;
 uint16 MIN_V;
 uint16 MAX_I;
 uint16 MIN_I;
-uint16 T_EFF;
+uint16 ADC_DELAY;
 
 uint16 senValueV;
 uint16 senValueI;
@@ -182,13 +178,17 @@ int32 realCur;
 uint32 powerVal;
 uint32 energyVal;
 uint32 energyVal_Lcd_display;
-uint16 RMS_V;
-uint16 RMS_I;
-uint32 VrmsTemp;
+uint64 RMS_V;
+uint64 RMS_I;
+uint64 VrmsTemp;
 uint64 IrmsTemp;
-uint64 powerTemp;
 uint32 l_nSamples;
 uint16 status;
+
+
+//testing
+uint16 l_nSamples_test=1;
+uint16 flagInc_test=0;
 
 uint64 sm_ADD; //smart meter external IEEE address
 uint16 sm_nwkADD;  //smart meter network address
@@ -205,9 +205,20 @@ uint64 coordinator_extAddr; // Coordinator extended IEEE address
 //pcoordinator_extAddr = &coordinator_extAddr;  //set pointer to coordinator_Addr
 //psm_nwkADD = &sm_nwkADD;
 
-uint16 paramReg[10];
+uint16 paramReg[12];
 
 uint16 dataReg[14];
+//
+uint16 coordinator_Addr_3;  
+uint16 coordinator_Addr_2;
+uint16 coordinator_Addr_1;
+uint16 coordinator_Addr_0;
+
+//
+uint16 ADD_3;
+uint16 ADD_2;
+uint16 ADD_1;
+uint16 ADD_0;
 
 /*********************************************************************
  * GLOBAL FUNCTIONS
@@ -284,23 +295,24 @@ void zclSmartMeter_LcdPowerDisplayUpdate(void);
 //void zclSmartMeter_LcdDisplayMainMode(void);
 void zclSmartMeter_LcdDisplayTempMode(void);
 // void zclSmartMeter_LcdDisplayHelpMode(void);
+void zclSmartMeter_LcdDisplayTestMode(void);
 
 // app SmartMeter functions
 // void zclSmartMeter_SendTemp(void);
-void zclSmartMeter_SendParm(void);
-void zclSmartMeter_SendData(void);
-void zclSmartMeter_SendReset(void);
-void zclSmartMeter_SendRelay(void);
-void zclSmartMeter_SendStart(void);
-void zclSmartMeter_SendAdd(void);
-void zclSmartMeter_nvReadParam(void);
-void zclSmartMeter_nvWriteParam(void);
+static void zclSmartMeter_SendParam(void);
+static void zclSmartMeter_SendData(void);
+static void zclSmartMeter_SendReset(void);
+static void zclSmartMeter_SendRelay(void);
+// static void zclSmartMeter_SendStart(void);
+static void zclSmartMeter_SendAdd(void);
+static void zclSmartMeter_nvReadParam(void);
+static void zclSmartMeter_nvWriteParam(void);
 void zclSmartMeter_dataRegInit(void);
 void zclSmartMeter_paramRegInit(void);
 void zclSmartMeter_parameterInit(void);
 void zclSmartMeter_calPowerInc(void);
 void zclSmartMeter_UpdateDataReg(void);
-uint16 zclSmartMeter_map(uint16 senValue, uint16 MIN_ADC, uint16 MAX_ADC, uint16 MIN_PEAK, uint16 MAX_PEAK);
+int32 zclSmartMeter_map(uint16 senValue, uint16 MIN_ADC, uint16 MAX_ADC, int16 MIN_PEAK, uint16 MAX_PEAK);
 
 // app SmartMeter functions
 void zclSmartMeter_ADC_init(void);
@@ -323,9 +335,10 @@ static void zclSmartMeter_ProcessIncomingMsg( zclIncomingMsg_t *msg );
 static uint8 zclSmartMeter_ProcessInDiscCmdsRspCmd( zclIncomingMsg_t *pInMsg );
 static uint8 zclSmartMeter_ProcessInDiscAttrsRspCmd( zclIncomingMsg_t *pInMsg );
 static uint8 zclSmartMeter_ProcessInDiscAttrsExtRspCmd( zclIncomingMsg_t *pInMsg );
-
 #endif // ZCL_DISCOVER
-
+#ifdef ZCL_REPORT
+static void zclSmartMeter_ProcessInReportCmd( zclIncomingMsg_t *pInMsg );
+#endif  // ZCL_REPORT
 
 /*********************************************************************
  * STATUS STRINGS
@@ -395,9 +408,9 @@ void zclSmartMeter_Init( byte task_id )
   zclSmartMeter_TaskID = task_id;
 
   // Set destination address to indirect
-  zclSmartMeter_DstAddr.addrMode = (afAddrMode_t)AddrNotPresent;
-  zclSmartMeter_DstAddr.endPoint = 0;
-  zclSmartMeter_DstAddr.addr.shortAddr = 0;
+ // zclSmartMeter_DstAddr.addrMode = (afAddrMode_t)AddrNotPresent;
+ // zclSmartMeter_DstAddr.endPoint = 0;
+ // zclSmartMeter_DstAddr.addr.shortAddr = 0;
 
   // This app is part of the Home Automation Profile
   zclHA_Init( &zclSmartMeter_SimpleDesc );
@@ -442,11 +455,20 @@ void zclSmartMeter_Init( byte task_id )
   //Initialize ADC 
   zclSmartMeter_ADC_init();
   // Get smart meter 64-bit IEEE external address and network address
- psm_ADD = NLME_GetExtAddr();
- sm_ADD = *psm_ADD;
+ // psm_ADD = NLME_GetExtAddr();
+ psm_ADD = saveExtAddr;
+ // sm_ADD = *psm_ADD;
  sm_nwkADD = NLME_GetShortAddr();
- /* lhy
+ 
+  ADD_3 = (uint16)saveExtAddr[6] + ((((uint16)saveExtAddr[7])<<8)&0xFF00); //lhy
+  ADD_2 = (uint16)saveExtAddr[4] + ((((uint16)saveExtAddr[5])<<8)&0xFF00);
+  ADD_1 = (uint16)saveExtAddr[2] + ((((uint16)saveExtAddr[3])<<8)&0xFF00);
+  ADD_0 = (uint16)saveExtAddr[0] + ((((uint16)saveExtAddr[1])<<8)&0xFF00);
+  sm_ADD = ((uint64)ADD_0&0xFFFF) + ((((uint64)ADD_1)<<16)&0xFFFF0000) + ((((uint64)ADD_2)<<32)&0xFFFF00000000) + ((((uint64)ADD_3)<<48)&0xFFFF000000000000); 
+ 
  //sm_nwkADD = *psm_nwkADD;
+  
+ /* 
  // Set destination address to 64-bit  check &zclSmartMeter_DstAddr
   zclSmartMeter_DstAddr.addrMode = (afAddrMode_t)Addr64Bit;
   zclSmartMeter_DstAddr.endPoint = SmartMeter_ENDPOINT;
@@ -462,11 +484,12 @@ void zclSmartMeter_Init( byte task_id )
   zclSmartMeter_DstAddr.addr.extAddr[2] = (uint8)(((coordinator_extAddr)>>16)&0x00000000000000FF);
   zclSmartMeter_DstAddr.addr.extAddr[1] = (uint8)(((coordinator_extAddr)>>8)&0x00000000000000FF);
   zclSmartMeter_DstAddr.addr.extAddr[0] = (uint8)((coordinator_extAddr)&0x00000000000000FF);
-
+*/
+  
 // Set up the serial console to use for displaying messages.  This is
 // just for debugging purpose and is not needed for Systick operation.
 //
- */
+ 
 InitConsole();
 }
 
@@ -481,7 +504,7 @@ InitConsole();
  */
 uint16 zclSmartMeter_event_loop( uint8 task_id, uint16 events )
 {
-  afIncomingMSGPacket_t *MSGpkt;
+  afIncomingMSGPacket_t *MSGpkt; //AF.h
 
   (void)task_id;  // Intentionally unreferenced parameter
 
@@ -572,26 +595,15 @@ uint16 zclSmartMeter_event_loop( uint8 task_id, uint16 events )
     return ( events ^ SmartMeter_MAIN_SCREEN_EVT );
   }
   
-/*
-  if ( events & SmartMeter_TEMP_SEND_EVT )
-  {
-    zclSmartMeter_SendTemp();
-
-    // report current temperature reading every 10 seconds
-   osal_start_timerEx( zclSmartMeter_TaskID, SmartMeter_TEMP_SEND_EVT, SmartMeter_REPORT_INTERVAL );
-    return ( events ^ SmartMeter_TEMP_SEND_EVT );
-  } 
-*/  
+ 
     if ( events & SmartMeter_ADC_SEND_EVT )
   {
-   
     zclSmartMeter_calPowerInc();
     // get ADC reading every 1 millisecond
     osal_start_timerEx( zclSmartMeter_TaskID, SmartMeter_ADC_SEND_EVT, SmartMeter_PowerCal_INTERVAL );
-    return ( events ^ SmartMeter_ADC_SEND_EVT );
-    
+    return ( events ^ SmartMeter_ADC_SEND_EVT ); 
   }
-
+  
   // Discard unknown events
   return 0;
 }
@@ -617,107 +629,17 @@ static void zclSmartMeter_HandleKeys( byte shift, byte keys )
 {
   if ( keys & HAL_KEY_SW_1 )
   {
-    /*
-    // increase temperature
-    giTemperatureSensorScreenMode = TEMPSENSE_MAINMODE;
 
-    if ( zclSmartMeter_MeasuredValue < zclSmartMeter_MaxMeasuredValue )
-    {
-      zclSmartMeter_MeasuredValue = zclSmartMeter_MeasuredValue + 100;  // considering using whole number value
-    }
-    else if ( zclSmartMeter_MeasuredValue >= zclSmartMeter_MaxMeasuredValue )
-    {
-      zclSmartMeter_MeasuredValue = zclSmartMeter_MaxMeasuredValue;
-    }
-
-    // Send temperature information
-    zclSmartMeter_SendTemp();
-    */
-     // try
-   // realVol = realVol+100;
-   // realCur = realCur+100;
-    zclSmartMeter_SendParm();
   }
 
   if ( keys & HAL_KEY_SW_2 )
   {
-    zclSmartMeter_SendData();
-/*
-    if ( ( giTemperatureSensorScreenMode == TEMPSENSE_MAINMODE ) ||
-        ( giTemperatureSensorScreenMode == TEMPSENSE_HELPMODE ) )
-    {
-      giTemperatureSensorScreenMode = TEMPSENSE_MAINMODE;
 
-#ifdef ZCL_EZMODE
-      zclEZMode_InvokeData_t ezModeData;
-      static uint16 clusterIDs[] = { ZCL_CLUSTER_ID_MS_TEMPERATURE_MEASUREMENT };   // only bind on the Temperature Measurement cluster
-
-      // Invoke EZ-Mode
-      ezModeData.endpoint = SmartMeter_ENDPOINT; // endpoint on which to invoke EZ-Mode
-      if ( ( zclSmartMeter_NwkState == DEV_ZB_COORD ) ||
-           ( zclSmartMeter_NwkState == DEV_ROUTER )   ||
-           ( zclSmartMeter_NwkState == DEV_END_DEVICE ) )
-      {
-        ezModeData.onNetwork = TRUE;      // node is already on the network
-      }
-      else
-      {
-        ezModeData.onNetwork = FALSE;     // node is not yet on the network
-      }
-      ezModeData.initiator = TRUE;        // Temperature Sensor is an initiator
-      ezModeData.numActiveInClusters = 1;
-      ezModeData.pActiveInClusterIDs = clusterIDs;
-      ezModeData.numActiveOutClusters = 0;   // active output cluster
-      ezModeData.pActiveOutClusterIDs = NULL;
-      zcl_InvokeEZMode( &ezModeData );
-
-#ifdef LCD_SUPPORTED
-      HalLcdWriteString( "EZMode", HAL_LCD_LINE_2 );
-#endif
-
-      // NOT ZCL_EZMODE, Use EndDeviceBind
-#else
-      {
-        zAddrType_t dstAddr;
-        dstAddr.addrMode = Addr16Bit;
-        dstAddr.addr.shortAddr = 0;   // Coordinator makes the EDB match
-
-        // Initiate an End Device Bind Request, this bind request will
-        // only use a cluster list that is important to binding.
-        HalLedSet ( HAL_LED_4, HAL_LED_MODE_OFF );
-        ZDP_EndDeviceBindReq( &dstAddr, NLME_GetShortAddr(),
-                              SmartMeter_ENDPOINT,
-                              ZCL_HA_PROFILE_ID,
-                              0, NULL,
-                              ZCLSmartMeter_BINDINGLIST, bindingOutClusters,
-                              FALSE );
-      }
-#endif // ZCL_EZMODE
-    }
-    */
   }
 
   if ( keys & HAL_KEY_SW_3 )
   {
-    zclSmartMeter_SendAdd();
-    /*
-    giTemperatureSensorScreenMode = TEMPSENSE_MAINMODE;
-
-    // decrease the temperature
-    if ( zclSmartMeter_MeasuredValue > zclSmartMeter_MinMeasuredValue )
-    {
-      zclSmartMeter_MeasuredValue = zclSmartMeter_MeasuredValue - 100;  // considering using whole number value
-    }
-    else if ( zclSmartMeter_MeasuredValue >= zclSmartMeter_MinMeasuredValue )
-    {
-      zclSmartMeter_MeasuredValue = zclSmartMeter_MinMeasuredValue;
-    }
-
-    // Send temperature information
-    zclSmartMeter_SendTemp();
-    */
- // realVol = realVol-100;
- // realCur = realCur-100;
+    
   }
 
   if ( keys & HAL_KEY_SW_4 )
@@ -758,8 +680,7 @@ static void zclSmartMeter_HandleKeys( byte shift, byte keys )
 */
   // update display
   //zclSmartMeter_LcdDisplayUpdate();
-  zclSmartMeter_LCDDisplayUpdate();
-   
+  zclSmartMeter_LCDDisplayUpdate();  
 }
 
 void zclsmartmeter_startEZmode( void )
@@ -818,46 +739,7 @@ void zclsmartmeter_startEZmode( void )
 #endif // ZCL_EZMODE
     }
 } 
-/*********************************************************************
- * @fn      zclSmartMeter_LcdDisplayUpdate
- *
- * @brief   Called to update the LCD display.
- *
- * @param   none
- *
- * @return  none
- */
-/*
-void zclSmartMeter_LcdDisplayUpdate( void )
-{
-  // turn on red LED for temperatures >= 24.00C
-  if ( zclSmartMeter_MeasuredValue >= 2400 )
-  {
-    HalLedSet ( HAL_LED_1, HAL_LED_MODE_OFF );
-    HalLedSet ( HAL_LED_2, HAL_LED_MODE_ON );
-  }
-  // turn on green LED for temperatures <= 20.00C
-  else if ( zclSmartMeter_MeasuredValue <= 2000 )
-  {
-    HalLedSet ( HAL_LED_1, HAL_LED_MODE_ON );
-    HalLedSet ( HAL_LED_2, HAL_LED_MODE_OFF );
-  }
-  // turn on both red and green LEDs for temperatures between 20.00C and 24.00C
-  else
-  {
-    HalLedSet ( HAL_LED_1, HAL_LED_MODE_ON );
-    HalLedSet ( HAL_LED_2, HAL_LED_MODE_ON );
-  }
-  if ( giTemperatureSensorScreenMode == TEMPSENSE_HELPMODE )
-  {
-    zclSmartMeter_LcdDisplayHelpMode();
-  }
-  else
-  {
-    zclSmartMeter_LcdDisplayMainMode();
-  }
-}
-*/
+
 /*********************************************************************
  * @fn      zclSmartMeter_LCDDisplayUpdate
  *
@@ -900,114 +782,42 @@ void zclSmartMeter_LCDDisplayUpdate( void )
   
 }
 
-/*********************************************************************
- * @fn      zclSmartMeter_LcdDisplayMainMode
- *
- * @brief   Called to display the main screen on the LCD.
- *
- * @param   none
- *
- * @return  none
- */
-/*
-void zclSmartMeter_LcdDisplayMainMode( void )
+
+void zclSmartMeter_LcdDisplayTestMode( void )
 {
-  char sDisplayTemp[16];
-
-  if ( zclSmartMeter_NwkState == DEV_ZB_COORD )
+  char sDisplayCoIEEEaddr[32];
+  uint8 IEEEaddr[8];
+ 
+// display coordinator IEEE addr
+ osal_memcpy(sDisplayCoIEEEaddr, "IEEE:", 5);
+   if ( (coordinator_Addr_0 == NULL)|| (coordinator_Addr_1 == NULL)|| (coordinator_Addr_2 == NULL)|| (coordinator_Addr_3 == NULL))
   {
-    zclHA_LcdStatusLine1( 0 );
-  }
-  else if ( zclSmartMeter_NwkState == DEV_ROUTER )
-  {
-    zclHA_LcdStatusLine1( 1 );
-  }
-  else if ( zclSmartMeter_NwkState == DEV_END_DEVICE )
-  {
-    zclHA_LcdStatusLine1( 2 );
-  }
-
-  // display current temperature
-  osal_memcpy(sDisplayTemp, "TEMP: ", 6);
-  _ltoa( ( zclSmartMeter_MeasuredValue / 100 ), (void *)(&sDisplayTemp[6]), 10 );   // convert temperature to whole number
-  osal_memcpy( &sDisplayTemp[8], "C", 2 );
-#ifdef LCD_SUPPORTED
-  HalLcdWriteString( (char *)sDisplayTemp, HAL_LCD_LINE_2 );
-#endif
-
-#ifdef LCD_SUPPORTED
-  if ( ( zclSmartMeter_NwkState == DEV_ZB_COORD ) ||
-       ( zclSmartMeter_NwkState == DEV_ROUTER ) )
-  {
-    // display help key with permit join status
-    if ( gPermitDuration )
-    {
-      HalLcdWriteString( "SW5: Help      *", HAL_LCD_LINE_3 );
-    }
-    else
-    {
-      HalLcdWriteString( "SW5: Help       ", HAL_LCD_LINE_3 );
-    }
+    osal_memcpy( &sDisplayCoIEEEaddr[5], "N/A", 4 );
   }
   else
   {
-    // display help key
-    HalLcdWriteString( (char *)sSwHelp, HAL_LCD_LINE_3 );
-  }
-#endif
-}
-*/
-/*********************************************************************
- * @fn      zclSmartMeter_LcdDisplayHelpMode
- *
- * @brief   Called to display the SW options on the LCD.
- *
- * @param   none
- *
- * @return  none
- */
-/*
-void zclSmartMeter_LcdDisplayHelpMode( void )
-{
-#ifdef LCD_SUPPORTED
-  HalLcdWriteString( (char *)sSwTempUp, HAL_LCD_LINE_1 );
-  HalLcdWriteString( (char *)sSwEZMode, HAL_LCD_LINE_2 );
-  HalLcdWriteString( (char *)sSwTempDown, HAL_LCD_LINE_3 );
-#endif
-}
-*/
-/*********************************************************************
- * @fn      zclSmartMeter_SendTemp
- *
- * @brief   Called to send current temperature information to the thermostat
- *
- * @param   none
- *
- * @return  none
- */
-/*
-static void zclSmartMeter_SendTemp( void )
-{
-#ifdef ZCL_REPORT
-  zclReportCmd_t *pReportCmd;
-
-  pReportCmd = osal_mem_alloc( sizeof(zclReportCmd_t) + sizeof(zclReport_t) );
-  if ( pReportCmd != NULL )
+  osal_memcpy(sDisplayCoIEEEaddr, "IEEE:", 5);
+ IEEEaddr[0] = (coordinator_Addr_3>>8)&0x00FF; 
+ IEEEaddr[1] = coordinator_Addr_3&0x00FF; 
+ IEEEaddr[2] = (coordinator_Addr_2>>8)&0x00FF; 
+ IEEEaddr[3] = coordinator_Addr_2&0x00FF; 
+ IEEEaddr[4] = (coordinator_Addr_1>>8)&0x00FF; 
+ IEEEaddr[5] = coordinator_Addr_1&0x00FF; 
+ IEEEaddr[6] = (coordinator_Addr_0>>8)&0x00FF; 
+ IEEEaddr[7] = coordinator_Addr_0&0x00FF; 
+ 
+  for(int i=0;i<8;i++)
   {
-    pReportCmd->numAttr = 1;
-    pReportCmd->attrList[0].attrID = ATTRID_MS_TEMPERATURE_MEASURED_VALUE;
-    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_INT16;
-    pReportCmd->attrList[0].attrData = (void *)(&zclSmartMeter_MeasuredValue);
-
-    zcl_SendReportCmd( SmartMeter_ENDPOINT, &zclSmartMeter_DstAddr,
-                       ZCL_CLUSTER_ID_MS_TEMPERATURE_MEASUREMENT,
-                       pReportCmd, ZCL_FRAME_SERVER_CLIENT_DIR, TRUE, zclSmartMeterSeqNum++ );
+    _ltoa( IEEEaddr[i]>>4, (void *)(&sDisplayCoIEEEaddr[5+i*2]), 16 );
+    _ltoa( IEEEaddr[i]&0x0F, (void *)(&sDisplayCoIEEEaddr[5+i*2+1]), 16 );
+  }  
   }
+#ifdef LCD_SUPPORTED
+  HalLcdWriteString( (char *)sDisplayCoIEEEaddr, HAL_LCD_LINE_1 );
+#endif
 
-  osal_mem_free( pReportCmd );
-#endif  // ZCL_REPORT
 }
-*/
+
 /*********************************************************************
  * @fn      zclSmartMeter_SendParam     *
  *
@@ -1017,20 +827,24 @@ static void zclSmartMeter_SendTemp( void )
  *
  * @return  none
  */
-static void zclSmartMeter_SendParm( void )
+static void zclSmartMeter_SendParam( void )
 {
 #ifdef ZCL_REPORT
   zclReportCmd_t *pReportCmd;
+
+
+  
   uint16 packet[] = {USR_TX_GET, SUCCESS, MIN_ADC, MAX_ADC, SAMPLE_INT, SAMPLE_WIN,
-  MAG_I, MIN_V, MAX_V, MIN_I, MAX_I, T_EFF};  
+//  uint16 packet[] = {USR_TX_GET, COM_PARAM, MIN_ADC, MAX_ADC, SAMPLE_INT, SAMPLE_WIN,
+  MAG_I, MIN_V, MAX_V, MIN_I, MAX_I, ADC_DELAY};  
 
   pReportCmd = osal_mem_alloc( sizeof(zclReportCmd_t) + sizeof(zclReport_t) );
   if ( pReportCmd != NULL )
   {
     pReportCmd->numAttr = 1;
     pReportCmd->attrList[0].attrID = ATTRID_MS_PARAMETER_MEASURED_VALUE;
-    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_INT16;
-    pReportCmd->attrList[0].attrData = (void *)(&packet[0]);
+    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_UINT256;
+    pReportCmd->attrList[0].attrData = (void *)(packet);
 
     zcl_SendReportCmd( SmartMeter_ENDPOINT, &zclSmartMeter_DstAddr,
                        ZCL_CLUSTER_ID_MS_PARAMETER_MEASUREMENT,
@@ -1053,15 +867,18 @@ static void zclSmartMeter_SendData( void )
 {
 #ifdef ZCL_REPORT
   zclReportCmd_t *pReportCmd;
-  uint16 sm_ADD3 = (sm_ADD>>48) & 0xFFFF;
-  uint16 sm_ADD2 = (sm_ADD>>32) & 0xFFFF;
-  uint16 sm_ADD1 = (sm_ADD>>16) & 0xFFFF;
-  uint16 sm_ADD0 = sm_ADD & 0xFFFF;
-  uint16 POWER1 =(powerVal>>16) & 0xFFFF;
-  uint16 POWER0 =powerVal & 0xFFFF;
-  uint16 ENERGY1 =(energyVal>>16) & 0xFFFF;
-  uint16 ENERGY0 =energyVal & 0xFFFF;
-  uint16 packet[] = {USR_TX_GET, SUCCESS, sm_ADD3, sm_ADD2, sm_ADD1, sm_ADD0, 
+ // uint16 sm_ADD3 = (sm_ADD>>48) & 0xFFFF;
+ // uint16 sm_ADD2 = (sm_ADD>>32) & 0xFFFF;
+ // uint16 sm_ADD1 = (sm_ADD>>16) & 0xFFFF;
+ // uint16 sm_ADD0 = sm_ADD & 0xFFFF;
+ 
+
+  uint16 POWER1 = (powerVal>>16) & 0xFFFF;
+  uint16 POWER0 = powerVal & 0xFFFF;
+  uint16 ENERGY1 = (energyVal>>16) & 0xFFFF;
+  uint16 ENERGY0 = energyVal & 0xFFFF;
+ // uint16 packet[] = {USR_TX_GET, SUCCESS, sm_ADD3, sm_ADD2, sm_ADD1, sm_ADD0,
+  uint16 packet[] = {USR_TX_GET, SUCCESS, ADD_3, ADD_2, ADD_1, ADD_0,  
   RMS_V, RMS_I, POWER1, POWER0, ENERGY1, ENERGY0, SM_V, SM_I, STATUS};  
 
   pReportCmd = osal_mem_alloc( sizeof(zclReportCmd_t) + sizeof(zclReport_t) );
@@ -1069,8 +886,8 @@ static void zclSmartMeter_SendData( void )
   {
     pReportCmd->numAttr = 1;
     pReportCmd->attrList[0].attrID = ATTRID_MS_DATA_MEASURED_VALUE;
-    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_INT16;
-    pReportCmd->attrList[0].attrData = (void *)(&packet[0]);
+    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_UINT256;
+    pReportCmd->attrList[0].attrData = (void *)(packet);
 
     zcl_SendReportCmd( SmartMeter_ENDPOINT, &zclSmartMeter_DstAddr,
                        ZCL_CLUSTER_ID_MS_DATA_MEASUREMENT,
@@ -1096,19 +913,25 @@ static void zclSmartMeter_SendReset( void )
 {
 #ifdef ZCL_REPORT
   zclReportCmd_t *pReportCmd;
-  uint16 ENERGY_RESET_VALUE_1;
-  uint16 ENERGY_RESET_VALUE_0;
-  ENERGY_RESET_VALUE_1 = ((ENERGY_RESET_VALUE >> 16) && 0xFFFF);
-  ENERGY_RESET_VALUE_0 = ENERGY_RESET_VALUE && 0xFFFF;
-  int16 packet[] = {RESET, SUCCESS, flagreset, ENERGY_RESET_VALUE_1, ENERGY_RESET_VALUE_0};  
+  
+ // uint16 energy_reset_value_1 = 0;
+ // uint16 energy_reset_value_0 = 0; 
+ 
+
+  
+ // energy_reset_value_1 = ((ENERGY_RESET_VALUE >> 16) && 0xFFFF);
+ // energy_reset_value_0 = ENERGY_RESET_VALUE && 0xFFFF;
+
+//  uint16 packet[] = {RESET, SUCCESS, flagreset, energy_reset_value_1, energy_reset_value_0}; 
+   uint16 packet[] = {RESET, SUCCESS, flagreset, ENERGY_RESET_VALUE_1, ENERGY_RESET_VALUE_0}; 
 
   pReportCmd = osal_mem_alloc( sizeof(zclReportCmd_t) + sizeof(zclReport_t) );
   if ( pReportCmd != NULL )
   {
     pReportCmd->numAttr = 1;
     pReportCmd->attrList[0].attrID = ATTRID_MS_COM_MEASURED_VALUE;
-    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_INT16;
-    pReportCmd->attrList[0].attrData = (void *)(&packet[0]);
+    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_UINT128;
+    pReportCmd->attrList[0].attrData = (void *)(packet);
 
     zcl_SendReportCmd( SmartMeter_ENDPOINT, &zclSmartMeter_DstAddr,
                        ZCL_CLUSTER_ID_MS_COM_MEASUREMENT,
@@ -1133,16 +956,16 @@ static void zclSmartMeter_SendRelay( void )
 {
 #ifdef ZCL_REPORT
   zclReportCmd_t *pReportCmd;
-
-  int16 packet[] = {RELAY, SUCCESS, flagrelay};  
+  
+  uint16 packet[] = {RELAY, SUCCESS, flagrelay};  
 
   pReportCmd = osal_mem_alloc( sizeof(zclReportCmd_t) + sizeof(zclReport_t) );
   if ( pReportCmd != NULL )
   {
     pReportCmd->numAttr = 1;
     pReportCmd->attrList[0].attrID = ATTRID_MS_COM_MEASURED_VALUE;
-    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_INT16;
-    pReportCmd->attrList[0].attrData = (void *)(&packet[0]);
+    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_UINT64;
+    pReportCmd->attrList[0].attrData = (void *)(packet);
 
     zcl_SendReportCmd( SmartMeter_ENDPOINT, &zclSmartMeter_DstAddr,
                        ZCL_CLUSTER_ID_MS_COM_MEASUREMENT,
@@ -1167,15 +990,16 @@ static void zclSmartMeter_SendRestart( void )
 #ifdef ZCL_REPORT
   zclReportCmd_t *pReportCmd;
 
-  int16 packet[] = {START, SUCCESS, flaginc};  
+  
+  uint16 packet[] = {START, SUCCESS, flaginc};  
 
   pReportCmd = osal_mem_alloc( sizeof(zclReportCmd_t) + sizeof(zclReport_t) );
   if ( pReportCmd != NULL )
   {
     pReportCmd->numAttr = 1;
     pReportCmd->attrList[0].attrID = ATTRID_MS_COM_MEASURED_VALUE;
-    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_INT16;
-    pReportCmd->attrList[0].attrData = (void *)(&packet[0]);
+    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_UINT64;
+    pReportCmd->attrList[0].attrData = (void *)(packet);
 
     zcl_SendReportCmd( SmartMeter_ENDPOINT, &zclSmartMeter_DstAddr,
                        ZCL_CLUSTER_ID_MS_COM_MEASUREMENT,
@@ -1194,28 +1018,27 @@ static void zclSmartMeter_SendRestart( void )
  *
  * @return  none
  */
-static void zclSmartMeter_SendAdd(void)
+static void zclSmartMeter_SendAdd(void) //verified
 {
 #ifdef ZCL_REPORT
   
   zclReportCmd_t *pReportCmd;
 
- 
-  uint16 ADD_3 = ((sm_ADD >> 48) && 0xFFFF);
-  uint16 ADD_2 = ((sm_ADD >> 32) && 0xFFFF);
-  uint16 ADD_1 = ((sm_ADD >> 16) && 0xFFFF);
-  uint16 ADD_0 = sm_ADD  && 0xFFFF;
+ // uint16 ADD_3 = ((sm_ADD >> 48) && 0xFFFF);
+ // uint16 ADD_2 = ((sm_ADD >> 32) && 0xFFFF);
+ // uint16 ADD_1 = ((sm_ADD >> 16) && 0xFFFF);
+ // uint16 ADD_0 = sm_ADD  && 0xFFFF;  
   
- 
-  uint16 packet[] = {USR_TX_GET, COM_ADD, ADD_3, ADD_2, ADD_1, ADD_0};  
+  uint16 packet[] = {USR_TX_GET, SUCCESS, ADD_3, ADD_2, ADD_1, ADD_0}; 
+  // uint16 packet[] = {USR_TX_GET, COM_ADD, ADD_3, ADD_2, ADD_1, ADD_0};  
 
   pReportCmd = osal_mem_alloc( sizeof(zclReportCmd_t) + sizeof(zclReport_t) );
   if ( pReportCmd != NULL )
   {
     pReportCmd->numAttr = 1;
     pReportCmd->attrList[0].attrID = ATTRID_MS_ADD_MEASURED_VALUE;
-    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_INT16;
-    pReportCmd->attrList[0].attrData = (void *)(&packet[0]);
+    pReportCmd->attrList[0].dataType = ZCL_DATATYPE_UINT128; //zcl.c
+    pReportCmd->attrList[0].attrData = (void *)(packet);
     
    // send smart meter IEEE address to coordinator after a random delay from
    // time of reception of network discovery command
@@ -1223,10 +1046,10 @@ static void zclSmartMeter_SendAdd(void)
    //   osal_start_timerEx( zclSmartMeter_TaskID, SmartMeter_NWKDISCOV_SEND_EVT, SmartMeter_NwkDiscov_INTERVAL );
    // add random delay function here
      unsigned long ulValue_start;
-   /*NVIC_ST_CURRENT register
-    must be written to force the reload. Any write to this register clears the SysTick counter to 0
-    and causes a reload with the supplied period on the next clock.*/
-    //add code to write to  NVIC_ST_CURRENT register
+   // NVIC_ST_CURRENT register
+   // must be written to force the reload. Any write to this register clears the SysTick counter to 0
+   // and causes a reload with the supplied period on the next clock.
+   //add code to write to  NVIC_ST_CURRENT register
    //
    // Configure and enable the SysTick counter.
    //
@@ -1296,7 +1119,7 @@ static void zclSmartMeter_nvWriteParam( void )
    
 } 
 
-
+#ifdef ZCL_REPORT
 /*********************************************************************
  * @fn      zclSmartMeter_ProcessInReportCmd  *
  *
@@ -1312,37 +1135,47 @@ static void zclSmartMeter_ProcessInReportCmd( zclIncomingMsg_t *pInMsg )
 
   pInParameterReport = (zclReportCmd_t *)pInMsg->attrCmd;
  
-  uint16 COMMAND = pInParameterReport->attrList[0].attrData[0];
- 
-  uint16 OPERATION = pInParameterReport->attrList[0].attrData[1];
-  uint16 ENERGY_RESET_VALUE_1;
-  uint16 ENERGY_RESET_VALUE_0;
+  uint16 COMMAND = BUILD_UINT16(pInParameterReport->attrList[0].attrData[0], pInParameterReport->attrList[0].attrData[1]);
+  uint16 OPERATION = BUILD_UINT16(pInParameterReport->attrList[0].attrData[2], pInParameterReport->attrList[0].attrData[3]);
+  
+  // uint16 ENERGY_RESET_VALUE_1;
+  // uint16 ENERGY_RESET_VALUE_0;
+  
   if ((COMMAND == USR_RX_GET) && (OPERATION == COM_PARAM) && 
       (pInParameterReport->attrList[0].attrID) == ATTRID_MS_PARAMETER_MEASURED_VALUE) 
-        // send the current parameter value to send over the air to Coordinator
-  zclSmartMeter_SendParm();
+ // send the current parameter value to send over the air to Coordinator
+  {
+    zclSmartMeter_SendParam();
+
+  }
   
  if ((COMMAND == USR_RX_GET) && (OPERATION == COM_DATA) && 
       (pInParameterReport->attrList[0].attrID) == ATTRID_MS_DATA_MEASURED_VALUE) 
-    // send the current data value sent over the air to Coordinator
-  zclSmartMeter_SendData(); 
-
- if ((COMMAND == USR_RX_SET) && (OPERATION == COM_PARAM) && 
-     (pInParameterReport->attrList[0].attrID) == ATTRID_MS_PARAMETER_MEASURED_VALUE) {
-   // set the current parameter sent over the air from the Coordinator
-  MIN_ADC = pInParameterReport->attrList[0].attrData[2];
-  MAX_ADC = pInParameterReport->attrList[0].attrData[3];
-  SAMPLE_INT = pInParameterReport->attrList[0].attrData[4];
-  SAMPLE_WIN = pInParameterReport->attrList[0].attrData[5];
-  MAG_I = pInParameterReport->attrList[0].attrData[6];
-  MIN_V = pInParameterReport->attrList[0].attrData[7];
-  MAX_V = pInParameterReport->attrList[0].attrData[8];
-  MIN_I = pInParameterReport->attrList[0].attrData[9];
-  MAX_I = pInParameterReport->attrList[0].attrData[10];
-  T_EFF = pInParameterReport->attrList[0].attrData[11];
+ // send the current data value sent over the air to Coordinator
+ {
+   zclSmartMeter_SendData(); 
+  
+ }
+ 
+// if ((COMMAND == USR_RX_SET) && (OPERATION == COM_PARAM) && 
+   if ((COMMAND == USR_RX_SET) && (OPERATION == SET_PARAM) &&
+     (pInParameterReport->attrList[0].attrID) == ATTRID_MS_PARAMETER_MEASURED_VALUE) 
+ {
+ // set the current parameter sent over the air from the Coordinator
+  
+  MIN_ADC = BUILD_UINT16(pInParameterReport->attrList[0].attrData[4], pInParameterReport->attrList[0].attrData[5]); 
+  MAX_ADC = BUILD_UINT16(pInParameterReport->attrList[0].attrData[6], pInParameterReport->attrList[0].attrData[7]);
+  SAMPLE_INT = BUILD_UINT16(pInParameterReport->attrList[0].attrData[8], pInParameterReport->attrList[0].attrData[9]);
+  SAMPLE_WIN = BUILD_UINT16(pInParameterReport->attrList[0].attrData[10], pInParameterReport->attrList[0].attrData[11]);
+  MAG_I = BUILD_UINT16(pInParameterReport->attrList[0].attrData[12], pInParameterReport->attrList[0].attrData[13]);
+  MIN_V = BUILD_UINT16(pInParameterReport->attrList[0].attrData[14], pInParameterReport->attrList[0].attrData[15]);
+  MAX_V = BUILD_UINT16(pInParameterReport->attrList[0].attrData[16], pInParameterReport->attrList[0].attrData[17]);
+  MIN_I = BUILD_UINT16(pInParameterReport->attrList[0].attrData[18], pInParameterReport->attrList[0].attrData[19]);
+  MAX_I = BUILD_UINT16(pInParameterReport->attrList[0].attrData[20], pInParameterReport->attrList[0].attrData[21]);
+  ADC_DELAY = BUILD_UINT16(pInParameterReport->attrList[0].attrData[22], pInParameterReport->attrList[0].attrData[23]);
   
   //uint16 paramReg[] = {MIN_ADC, MAX_ADC, SAMPLE_INT, SAMPLE_WIN, MAG, MIN_V, MAX_V, MIN_I,
-  //MAX_I, T_EFF};  
+  //MAX_I, ADC_DELAY};  
   paramReg[0]=MIN_ADC;
   paramReg[1]=MAX_ADC;
   paramReg[2]=SAMPLE_INT;
@@ -1353,52 +1186,97 @@ static void zclSmartMeter_ProcessInReportCmd( zclIncomingMsg_t *pInMsg )
   paramReg[7]=MAX_V;
   paramReg[8]=MIN_I;
   paramReg[9]=MAX_I;
-  paramReg[10]=T_EFF;
+  paramReg[10]=ADC_DELAY;
+  
 
+  
   //Update flash memory
   zclSmartMeter_nvWriteParam();
-
-
    // send the current parameter value to send over the air to Coordinator
-  zclSmartMeter_SendParm();
+  zclSmartMeter_SendParam();
+  
      }
+  
   if ((COMMAND == RESET)  && 
-     (pInParameterReport->attrList[0].attrID) == ATTRID_MS_COM_MEASURED_VALUE) {
-       flagreset = pInParameterReport->attrList[0].attrData[1];
-       ENERGY_RESET_VALUE_1 = pInParameterReport->attrList[0].attrData[2];
-       ENERGY_RESET_VALUE_0 = pInParameterReport->attrList[0].attrData[3];
+     (pInParameterReport->attrList[0].attrID) == ATTRID_MS_COM_MEASURED_VALUE) 
+    {
+       // flagreset = pInParameterReport->attrList[0].attrData[1];
+       flagreset = OPERATION;
+      // ENERGY_RESET_VALUE_1 = pInParameterReport->attrList[0].attrData[2];
+      // ENERGY_RESET_VALUE_0 = pInParameterReport->attrList[0].attrData[3];
+       ENERGY_RESET_VALUE_1 = BUILD_UINT16(pInParameterReport->attrList[0].attrData[4], pInParameterReport->attrList[0].attrData[5]);
+       ENERGY_RESET_VALUE_0 = BUILD_UINT16(pInParameterReport->attrList[0].attrData[6], pInParameterReport->attrList[0].attrData[7]);
        ENERGY_RESET_VALUE = BUILD_UINT32_16(ENERGY_RESET_VALUE_1, ENERGY_RESET_VALUE_0);
+       
+       
    // send the current flagreset and ENERGY_RESET_VALUE to send over the air to Coordinator
      zclSmartMeter_SendReset();
+ 
      }
+  
   if ((COMMAND == RELAY) && 
-     (pInParameterReport->attrList[0].attrID) == ATTRID_MS_COM_MEASURED_VALUE) {
-       flagrelay = pInParameterReport->attrList[0].attrData[1];
+     (pInParameterReport->attrList[0].attrID) == ATTRID_MS_COM_MEASURED_VALUE) 
+  {
+    // flagrelay = pInParameterReport->attrList[0].attrData[1];
+       flagrelay = OPERATION;
        // send the current relay value to send over the air to Coordinator
-     zclSmartMeter_SendRelay();  
+     zclSmartMeter_SendRelay(); 
+   
+   
      }
-    if ((COMMAND == USR_RX_SET) && 
-     (pInParameterReport->attrList[0].attrID) == ATTRID_MS_COM_MEASURED_VALUE) {
-       flaginc = pInParameterReport->attrList[0].attrData[1];
+  
+    if ((COMMAND == START) && 
+     (pInParameterReport->attrList[0].attrID) == ATTRID_MS_COM_MEASURED_VALUE) 
+    {
+       // flaginc = pInParameterReport->attrList[0].attrData[1];
+      flaginc = OPERATION;
        // send the current flaginc value to send over the air to Coordinator
-     zclSmartMeter_SendRestart();                                                   
+     zclSmartMeter_SendRestart();
+     
      }
-if ((COMMAND == USR_RX_GET) && (OPERATION == COM_ADD) && 
-     (pInParameterReport->attrList[0].attrID) == ATTRID_MS_ADD_MEASURED_VALUE) { 
+  
+   if ((COMMAND == USR_RX_GET) && (OPERATION == COM_ADD) && 
+     (pInParameterReport->attrList[0].attrID) == ATTRID_MS_ADD_MEASURED_VALUE) 
+    { 
     // get the coordinator IEEE address
-      uint16 coordinator_Addr_3 = pInParameterReport->attrList[0].attrData[2];  
-      uint16 coordinator_Addr_2 = pInParameterReport->attrList[0].attrData[3];
-      uint16 coordinator_Addr_1 = pInParameterReport->attrList[0].attrData[4];
-      uint16 coordinator_Addr_0 = pInParameterReport->attrList[0].attrData[5];
-      coordinator_extAddr= BUILD_UINT64_16(coordinator_Addr_3, coordinator_Addr_2,
+      coordinator_Addr_3 = BUILD_UINT16(pInParameterReport->attrList[0].attrData[4], pInParameterReport->attrList[0].attrData[5]); 
+      coordinator_Addr_2 = BUILD_UINT16(pInParameterReport->attrList[0].attrData[6], pInParameterReport->attrList[0].attrData[7]);
+      coordinator_Addr_1 = BUILD_UINT16(pInParameterReport->attrList[0].attrData[8], pInParameterReport->attrList[0].attrData[9]);
+      coordinator_Addr_0 = BUILD_UINT16(pInParameterReport->attrList[0].attrData[10], pInParameterReport->attrList[0].attrData[11]);
+      coordinator_extAddr = BUILD_UINT64_16(coordinator_Addr_3, coordinator_Addr_2,
                                      coordinator_Addr_1, coordinator_Addr_0);
+  
+   // Set destination address to 64-bit  check &zclSmartMeter_DstAddr
+     zclSmartMeter_DstAddr.addrMode = (afAddrMode_t)Addr64Bit;
+     zclSmartMeter_DstAddr.endPoint = SmartMeter_ENDPOINT;
+     zclSmartMeter_DstAddr.addr.extAddr[7] = (uint8)(((coordinator_extAddr)>>56)&0x00000000000000FF); //AF.h; highest
+     zclSmartMeter_DstAddr.addr.extAddr[6] = (uint8)(((coordinator_extAddr)>>48)&0x00000000000000FF);
+     zclSmartMeter_DstAddr.addr.extAddr[5] = (uint8)(((coordinator_extAddr)>>40)&0x00000000000000FF);
+     zclSmartMeter_DstAddr.addr.extAddr[4] = (uint8)(((coordinator_extAddr)>>32)&0x00000000000000FF);
+     zclSmartMeter_DstAddr.addr.extAddr[3] = (uint8)(((coordinator_extAddr)>>24)&0x00000000000000FF);
+     zclSmartMeter_DstAddr.addr.extAddr[2] = (uint8)(((coordinator_extAddr)>>16)&0x00000000000000FF);
+     zclSmartMeter_DstAddr.addr.extAddr[1] = (uint8)(((coordinator_extAddr)>>8)&0x00000000000000FF);
+     zclSmartMeter_DstAddr.addr.extAddr[0] = (uint8)((coordinator_extAddr)&0x00000000000000FF);
+ 
    // send smart meter IEEE address to coordinator after a random delay from
    // time of reception of network discovery command  -- add code
-      
-     zclSmartMeter_SendAdd();
-       
+     zclSmartMeter_SendAdd();    
+     zclSmartMeter_LcdDisplayTestMode(); // display C's IEEE address 
+     
      }
+  
+  if ((COMMAND == USR_RX_GET) && (OPERATION == ACK_SUCCESS) &&
+       ((pInParameterReport->attrList[0].attrID)== ATTRID_MS_ADD_MEASURED_VALUE ))
+  {
+   #ifdef LCD_SUPPORTED
+      HalLcdWriteString( "SendAck SUCCESS", HAL_LCD_LINE_2 );
+   #endif  
+  }
+  
 }
+
+#endif  // ZCL_REPORT
+
 /*********************************************************************
  * @fn      zclSmartMeter_parameterInit    *
  *
@@ -1428,16 +1306,16 @@ if ((COMMAND == USR_RX_GET) && (OPERATION == COM_ADD) &&
   }
   */
   
-  paramReg[0] = 0;
-  paramReg[1] = 1023;
-  paramReg[2]=1000;
-  paramReg[3]=60000;
-  paramReg[4]=0;
+  paramReg[0]=0;
+  paramReg[1]=1023;
+  paramReg[2]=140;
+  paramReg[3]=60;
+  paramReg[4]=1;
   paramReg[5]=100;
   paramReg[6]=110;
-  paramReg[7]=-110;
-  paramReg[8]=2;
-  paramReg[9]=-2;
+  paramReg[7]=110;
+  paramReg[8]=200;
+  paramReg[9]=200;
   paramReg[10]=200;
   
   
@@ -1445,13 +1323,13 @@ if ((COMMAND == USR_RX_GET) && (OPERATION == COM_ADD) &&
   MAX_ADC = paramReg[1];
   SAMPLE_INT = paramReg[2];
   SAMPLE_WIN = paramReg[3];
-  MAG_V = paramReg[4];
-  MAG_I = paramReg[5];
-  MIN_V = paramReg[6];
-  MAX_V = paramReg[7];
-  MIN_I = paramReg[8];
-  MAX_I = paramReg[9];
-  T_EFF = paramReg[10];
+  MAG_V= paramReg[4];
+  MAG_I= paramReg[5];
+  MAX_V = paramReg[6];
+  MIN_V = paramReg[7];
+  MAX_I = paramReg[8];
+  MIN_I = paramReg[9];
+  ADC_DELAY = paramReg[10];
   
   flaginc=0;
   senValueV=0;
@@ -1459,13 +1337,10 @@ if ((COMMAND == USR_RX_GET) && (OPERATION == COM_ADD) &&
   realVol=0;
   realCur=0;
   powerVal=0;
-  energyVal=0;
-  energyVal_Lcd_display=0;
   RMS_V=0;
   RMS_I=0;
   VrmsTemp=0;
   IrmsTemp=0;
-  powerTemp=0;
   l_nSamples=1;
   
   status=0;
@@ -1481,16 +1356,18 @@ if ((COMMAND == USR_RX_GET) && (OPERATION == COM_ADD) &&
  *
  * @return  none
  */
- 
+ /*
 static void zclSmartMeter_calPowerInc(void) 
 {
  if(flaginc)
  {//do the power calculation incrementally
    
+
+
    senValueV=analogRead(senPinVoltage);   //get ADC voltage value
    senValueI=analogRead(senPinCurrent);   //get ADC current value
-   realVol=zclSmartMeter_map(senValueV, MIN_ADC, MAX_ADC, MIN_V*1.414, MAX_V*1.414); //map to real voltage
-   realCur=zclSmartMeter_map(senValueI, MIN_ADC, MAX_ADC, MIN_I*1.414, MAX_I*1.414)*MAG_I;  //map to real current, mag by MAG
+   realVol=zclSmartMeter_map(senValueV, MIN_ADC, MAX_ADC, -MIN_V*1.414, MAX_V*1.414); //map to real voltage
+   realCur=zclSmartMeter_map(senValueI, MIN_ADC, MAX_ADC, -MIN_I*1.414, MAX_I*1.414)*MAG_I;  //map to real current, mag by MAG
    VrmsTemp+=(int32)realVol*(int32)realVol;  //accumulate V^2
    IrmsTemp+=(int32)realCur*(int32)realCur;  //accumulate I^2
    l_nSamples+=1;
@@ -1499,8 +1376,8 @@ static void zclSmartMeter_calPowerInc(void)
  {//calculate the power and energy
    RMS_V=(uint16)sqrt(VrmsTemp/l_nSamples); //get RMS voltage
    RMS_I=(uint16)sqrt(IrmsTemp/l_nSamples); //get RMS current
-   powerVal=(uint32)RMS_V*RMS_I;
-   energyVal=(uint32)(powerVal*(SAMPLE_INT+T_EFF)/1000000/3600/1000); //energy magnified by MAG in kWh
+   powerVal=RMS_V*RMS_I;
+   energyVal=(uint32)(powerVal*(SAMPLE_WIN)/3600/1000); //energy magnified by MAG in kWh
    energyVal_Lcd_display =(uint32)(energyVal*3000*1000); //energy magnified by MAG in W.s
    VrmsTemp=0;
    IrmsTemp=0;
@@ -1509,11 +1386,90 @@ static void zclSmartMeter_calPowerInc(void)
    //update dataReg[10]
    zclSmartMeter_UpdateDataReg();
    //update LCD display
-   zclSmartMeter_LcdPowerDisplayUpdate();
+  // zclSmartMeter_LcdPowerDisplayUpdate();  //lhy
    
    
  } 
 }
+
+*/
+
+
+
+//testing function
+static void zclSmartMeter_calPowerInc(void) 
+{
+ //if(flaginc)
+  if (1==flagInc_test)
+ {//do the power calculation incrementally
+   
+
+
+   senValueV=analogRead(senPinVoltage);   //get ADC voltage value
+   senValueI=analogRead(senPinCurrent);   //get ADC current value
+   realVol=zclSmartMeter_map(senValueV, MIN_ADC, MAX_ADC, (-MIN_V)*sqrt(2), MAX_V*sqrt(2)); //map to real voltage
+   realCur=zclSmartMeter_map(senValueI, MIN_ADC, MAX_ADC, (-MIN_I)*sqrt(2), MAX_I*sqrt(2));  //map to real current, mag by MAG
+   VrmsTemp+=(int32)realVol*(int32)realVol;  //accumulate V^2
+   IrmsTemp+=(int32)realCur*(int32)realCur;  //accumulate I^2
+   l_nSamples_test+=1;
+   if(0==l_nSamples_test%10)
+     {
+       flagInc_test=0;
+     }
+   
+ }
+ else
+ {//calculate the power and energy
+   
+   /*
+uint16 senValueV;
+uint16 senValueI;
+int32 realVol;
+int32 realCur;
+uint32 powerVal;
+uint32 energyVal;
+uint32 energyVal_Lcd_display;
+int32 RMS_V;
+int32 RMS_I;
+uint64 VrmsTemp;
+uint64 IrmsTemp;
+uint32 l_nSamples;
+uint16 status;
+*/
+
+   RMS_V=(int32)sqrt(VrmsTemp/l_nSamples_test); //get RMS voltage
+   RMS_I=(int32)sqrt(IrmsTemp/l_nSamples_test); //get RMS current
+   powerVal=RMS_V*RMS_I;
+   energyVal+=(uint32)(powerVal*SAMPLE_INT/1000000*l_nSamples_test/3600/1000*1000000000);     //energy magnified by MAG in kWh
+   energyVal_Lcd_display+=(uint32)(energyVal*3000*1000/1000000000);                    //energy magnified by MAG in W.s
+   UARTprintf("energyVal: %d\n", powerVal*SAMPLE_INT/1000000*l_nSamples_test/3600/1000*1000000000);                       //this line is for debugging
+   VrmsTemp=0;
+   IrmsTemp=0;
+   l_nSamples_test=1;
+   flagInc_test=1;
+   
+     UARTprintf("RMS_V: %d\n", (int32_t)RMS_V);                         //this line is for debugging
+     UARTprintf("RMS_I: %d\n", (int32_t)RMS_I);                       //this line is for debugging 
+     UARTprintf("powerVal: %d\n", (int32_t)powerVal);                         //this line is for debugging
+     
+     UARTprintf("energyVal_Lcd_display: %d\n", (int32_t)energyVal_Lcd_display);                       //this line is for debugging
+     
+     
+   
+
+   //update dataReg[10]
+   zclSmartMeter_UpdateDataReg();
+   //update LCD display
+  // zclSmartMeter_LcdPowerDisplayUpdate();  //lhy
+   
+   
+ } 
+}
+
+
+
+
+
   /*********************************************************************
  * @fn      zclSmartMeter_map
  *
@@ -1524,9 +1480,9 @@ static void zclSmartMeter_calPowerInc(void)
  * @return  none
  */
  
- uint16 zclSmartMeter_map(uint16 senValue, uint16 MIN_ADC, uint16 MAX_ADC, uint16 MIN_PEAK, uint16 MAX_PEAK)
+ int32 zclSmartMeter_map(uint16 senValue, uint16 MIN_ADC, uint16 MAX_ADC, int16 MIN_PEAK, uint16 MAX_PEAK)
  {
- return (senValue/(MAX_ADC-MIN_ADC)*(MAX_PEAK-MIN_PEAK));
+ return((MAX_PEAK-MIN_PEAK)/MAX_ADC*senValue+MIN_PEAK);
  }
  /*********************************************************************
  * @fn      zclSmartMeter_updata dataReg     
@@ -1557,11 +1513,11 @@ dataReg[4]=RMS_V;
 dataReg[5]=RMS_I;
 dataReg[6]=POWER1;
 dataReg[7]=POWER0;
-dataReg[9]=ENERGY1;
-dataReg[10]=ENERGY0;
-dataReg[11]=SM_V;
-dataReg[12]=SM_I;
-dataReg[13]=STATUS;
+dataReg[8]=ENERGY1;
+dataReg[9]=ENERGY0;
+dataReg[10]=SM_V;
+dataReg[11]=SM_I;
+dataReg[12]=STATUS;
 
   
   //copy dataReg to memory mapped loacations
@@ -1585,11 +1541,6 @@ dataReg[13]=STATUS;
  
  void zclSmartMeter_ADC_init(void)
  {
-// Initialize the GPIO pin configuration.
-//
-// Set pins AIN6 and AIN7 as GPIO input for ADC input using, SW controlled.
-//
-GPIOPinTypeGPIOInput(GPIO_A_BASE, GPIO_PIN_6 | GPIO_PIN_7);
 //
 // Set the clocking to run directly from the external crystal/oscillator.
 // (no ext 32k osc, no internal osc)
@@ -1611,6 +1562,13 @@ SysCtrlPeripheralEnable(SYS_CTRL_PERIPH_RFC);
 // Configure ADC, Internal reference, 256 decimation rate (10bit)
 //
 SOCADCSingleConfigure(SOCADC_10_BIT, SOCADC_REF_INTERNAL);
+
+ // add by Xu
+ // Initialize the GPIO pin configuration.
+ //
+ // Set pins AIN6 and AIN7 as GPIO input for ADC input using, SW controlled.
+ //
+ GPIOPinTypeGPIOInput(GPIO_A_BASE, GPIO_PIN_6 | GPIO_PIN_7);
  }
  /*****************************************************************************
 * 
