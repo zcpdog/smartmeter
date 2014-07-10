@@ -1083,8 +1083,6 @@ static void zclSmartMeter_SendAdd(void) //verified
  */
 static void zclSmartMeter_nvReadParam( void )
 {
-  //osalSnvId_t FLASH_PARAM;
-  //osalSnvLeng_t len;
   //len = 20;  //bytes
   uint16 *flashpt;
   //flashpt = 0x20000020;  //point to memory mapped address
@@ -1106,8 +1104,6 @@ static void zclSmartMeter_nvReadParam( void )
  */
 static void zclSmartMeter_nvWriteParam( void )
 {
- //osalSnvId_t FLASH_PARAM;
-  //osalSnvLeng_t len;
   //len = 20;
   uint16 *flashpt;
   //flashpt = 0x20000020;  //point to memory mapped address
@@ -1440,7 +1436,7 @@ uint16 status;
    RMS_V=(int32)sqrt(VrmsTemp/l_nSamples_test); //get RMS voltage
    RMS_I=(int32)sqrt(IrmsTemp/l_nSamples_test); //get RMS current
    powerVal=RMS_V*RMS_I;
-   energyVal+=(uint32)(powerVal*SAMPLE_INT/1000000*l_nSamples_test/3600/1000*1000000000);     //energy magnified by MAG in kWh
+   energyVal+=(uint32)(powerVal*(uint32)(SAMPLE_INT/1000000)*(uint32)(l_nSamples_test)/3600/1000*1000000000);     //energy magnified by MAG in kWh
    energyVal_Lcd_display+=(uint32)(energyVal*3000*1000/1000000000);                    //energy magnified by MAG in W.s
    UARTprintf("energyVal: %d\n", powerVal*SAMPLE_INT/1000000*l_nSamples_test/3600/1000*1000000000);                       //this line is for debugging
    VrmsTemp=0;
